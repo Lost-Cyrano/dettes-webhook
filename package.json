@@ -1,0 +1,9 @@
+{
+  "name": "dettes-webhook",
+  "version": "1.0.0",
+  "description": "Webhook Dodo Payments pour gestion des dettes",
+  "main": "api/webhook.js",
+  "dependencies": {
+    "firebase-admin": "^12.0.0"
+  }
+}
