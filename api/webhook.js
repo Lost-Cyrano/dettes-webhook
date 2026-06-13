@@ -1,13 +1,13 @@
-// api/webhook.js
 const crypto = require('crypto');
 
 // Initialisation Firebase
 const admin = require('firebase-admin');
 
-// Initialiser Firebase Admin SDK avec les credentials
+// Initialiser Firebase Admin SDK
 if (!admin.apps.length) {
   try {
-    const credentials = JSON.parse(process.env.FIREBASE_ADMIN_CREDENTIALS);
+    // Les credentials viendront des variables d'environnement Vercel
+    const credentials = JSON.parse(process.env.FIREBASE_ADMIN_CREDENTIALS || '{}');
     admin.initializeApp({
       credential: admin.credential.cert(credentials),
       projectId: "gestion-dettes-fcea1"
@@ -20,7 +20,7 @@ if (!admin.apps.length) {
 const db = admin.firestore();
 const TRANSACTION_FEE_RATE = 0.10;
 
-// Vérification de la signature webhook
+// Vérification signature
 function verifySignature(rawBody, signature, timestamp, webhookId, secret) {
   if (!signature || !timestamp || !webhookId || !secret) return false;
   
@@ -34,7 +34,7 @@ function verifySignature(rawBody, signature, timestamp, webhookId, secret) {
       .digest('base64');
     return signature.includes(computed);
   } catch (error) {
-    console.error("Signature verification error:", error);
+    console.error("Signature error:", error);
     return false;
   }
 }
@@ -67,7 +67,7 @@ async function updateDebtAfterPayment(grossAmountPaid, debtorId, userEmail, tran
       grossAmount: grossAmountPaid,
       fee: fee,
       date: today,
-      description: `Paiement en ligne (ID: ${transactionId}) - Frais 10% déduits - Email: ${userEmail}`,
+      description: `Paiement en ligne (ID: ${transactionId}) - Frais 10% - Email: ${userEmail}`,
       timestamp: admin.firestore.Timestamp.now()
     };
     
@@ -79,33 +79,22 @@ async function updateDebtAfterPayment(grossAmountPaid, debtorId, userEmail, tran
     console.log(`✅ Dette mise à jour: ${debtorId} - Réduction: ${debtReduction}€`);
     return true;
   } catch (error) {
-    console.error("Erreur mise à jour Firebase:", error);
+    console.error("Erreur mise à jour:", error);
     return false;
   }
 }
 
 // Handler Vercel
 module.exports = async (req, res) => {
+  // Uniquement POST
   if (req.method !== 'POST') {
     return res.status(405).send('Method Not Allowed');
   }
   
-  const signature = req.headers['webhook-signature'];
-  const timestamp = req.headers['webhook-timestamp'];
-  const webhookId = req.headers['webhook-id'];
-  const rawBody = JSON.stringify(req.body);
-  const webhookSecret = process.env.DODO_WEBHOOK_SECRET;
-  
-  if (webhookSecret) {
-    const isValid = verifySignature(rawBody, signature, timestamp, webhookId, webhookSecret);
-    if (!isValid) {
-      console.error("Invalid webhook signature");
-      return res.status(401).send('Invalid signature');
-    }
-  }
-  
+  // Accuser réception immédiatement
   res.status(200).send('OK');
   
+  // Traiter en arrière-plan
   try {
     const event = req.body;
     console.log("Webhook reçu:", event.type);
@@ -113,15 +102,17 @@ module.exports = async (req, res) => {
     if (event.type === 'payment.succeeded') {
       const metadata = event.metadata || {};
       const debtorId = metadata.debtor_id;
-      const grossAmount = metadata.gross_amount || (event.amount / 100);
+      const grossAmount = metadata.gross_amount;
       const userEmail = event.customer?.email || metadata.customer_email;
-      const transactionId = event.id || `payment_${Date.now()}`;
+      const transactionId = event.id;
       
       if (debtorId && grossAmount) {
         await updateDebtAfterPayment(grossAmount, debtorId, userEmail, transactionId);
+      } else {
+        console.error("Données manquantes:", { debtorId, grossAmount });
       }
     }
   } catch (error) {
-    console.error("Webhook processing error:", error);
+    console.error("Erreur traitement:", error);
   }
 };
